@@ -21,6 +21,6 @@ app.use(helmet());
 app.use('/paymentService', paymentService);
 
 exports.server = app;
-// exports.server = app.listen(3000, () => {
-//   console.log('server running at ' + 3000);
-// });
+exports.server = app.listen(3000, () => {
+  console.log('server running at ' + 3000);
+});

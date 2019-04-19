@@ -1,26 +1,23 @@
-const AWS = require("aws-sdk");
+const AWS = require('aws-sdk');
 const docClient = new AWS.DynamoDB.DocumentClient({
   region: process.env.REGION
 });
-const uuidv1 = require("uuid/v1");
-const stripe = require("./stripeInstance");
-const httpUtil = require("../utils/httpUtil.js");
+const uuidv1 = require('uuid/v1');
+const stripe = require('./stripeInstance');
 const userTable = process.env.USER_TABLE;
 const productTable = process.env.PRODUCT_TABLE;
 const billingHistoryTable = process.env.BILLING_HISTORY_TABLE;
 
 function validate(body, res) {
   if (!body.productId) {
-    res
-      .status(400)
-      .send(httpUtil.createResponse(400, "ERROR : Missing productId."));
+    res.status(400).send({ message: 'MISSING_PRODUCTID' });
     return false;
   }
   return true;
 }
 
 module.exports.handler = async function(req, res) {
-  console.log("Starting function charge...");
+  console.log('Starting function charge...');
   console.log(req.user);
 
   if (req.body === null || !validate(req.body, res)) {
@@ -34,7 +31,7 @@ module.exports.handler = async function(req, res) {
         Key: {
           userId: req.user.userId
         },
-        ReturnConsumedCapacity: "TOTAL"
+        ReturnConsumedCapacity: 'TOTAL'
       })
       .promise();
 
@@ -44,7 +41,7 @@ module.exports.handler = async function(req, res) {
         Key: {
           productId: req.body.productId
         },
-        ReturnConsumedCapacity: "TOTAL"
+        ReturnConsumedCapacity: 'TOTAL'
       })
       .promise();
 
@@ -62,16 +59,14 @@ module.exports.handler = async function(req, res) {
     );
 
     if (billingHistoryRecord) {
-      return res
-        .status(200)
-        .send(httpUtil.createResponse(200, billingHistoryRecord.Item));
-    } else throw "Adding billing record failed, user may have been charged.";
+      return res.status(200).send(billingHistoryRecord.Item);
+    } else throw 'Adding billing record failed, user may have been charged.';
   } catch (e) {
-    console.log("**ERROR** ", e);
-    if (e.raw && e.raw.code === "missing") {
-      return res.status(500).send("ERROR : Charge failed, no card on file.");
+    console.log('**ERROR** ', e);
+    if (e.raw && e.raw.code === 'missing') {
+      return res.status(500).send('ERROR : Charge failed, no card on file.');
     }
-    return res.status(500).send(httpUtil.createResponse(500, "ERROR :" + e));
+    return res.status(500).send({ message: 'interal server error' });
   }
 };
 
@@ -88,7 +83,7 @@ async function setBillingHistory(user, product, chargeInfo) {
       price: product.price,
       currency: product.currency,
       transactionDate: transactionDate,
-      paymentHandler: "STRIPE",
+      paymentHandler: 'STRIPE',
       cardBrand: user.stripeBillingCardBrand,
       cardLastFour: user.stripeBillingCardLast4,
       cardExpiration: user.stripeBillingCardExp,
@@ -100,7 +95,7 @@ async function setBillingHistory(user, product, chargeInfo) {
       billingAddressState: user.billingAddressState,
       paymentChargeType: chargeInfo.object.toUpperCase()
     },
-    ReturnConsumedCapacity: "TOTAL",
+    ReturnConsumedCapacity: 'TOTAL',
     TableName: billingHistoryTable
   };
   try {
@@ -112,11 +107,11 @@ async function setBillingHistory(user, product, chargeInfo) {
           userId: user.userId,
           billingHistoryId: billingHistoryId
         },
-        ReturnConsumedCapacity: "TOTAL"
+        ReturnConsumedCapacity: 'TOTAL'
       })
       .promise();
   } catch (e) {
-    console.log("**ERROR** With dynamo:", e);
+    console.log('**ERROR** With dynamo:', e);
     return;
   }
 }
