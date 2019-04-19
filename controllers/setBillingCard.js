@@ -1,10 +1,9 @@
 const { USER_TABLE } = require('../env.js');
 const { docClient } = require('./utils/dynamoSetup.js');
+const { getUser } = require('./utils/database.js');
 const stripe = require('./stripeInstance');
 const {
   ValidationError,
-  InvalidCredentialsError,
-  ResourceExistsError,
   resolveErrorSendResponse
 } = require('./utils/errors.js');
 
@@ -22,191 +21,123 @@ function validate(body, res) {
 module.exports.handler = async (req, res) => {
   try {
     console.log('Starting function setBillingCard...');
-    console.log(req.body);
+    console.log('BODY', req.body);
 
     if (req.body === null || !validate(req.body, res)) {
       return;
     }
 
-    const { stripeCustomerId } = req.user;
-    let result;
+    const user = await getUser(req.user.userId);
+    console.log('USER', user);
+
+    let stripeInforesult;
     let card;
+    let stripeRecord;
     let newCustomer = true;
     let newAddress = false;
 
     //New customer
-    if (!stripeCustomerId) {
+    if (!user.stripe) {
       newAddress = true; //so address is added to dynamo
-      let params = {
+
+      const createCustomerParams = {
         email: req.user.email,
         source: req.body.token,
-        //billing address
-        shipping: {
-          address: {
-            line1: req.body.line1,
-            city: req.body.city,
-            country: req.body.country,
-            line2: req.body.line2,
-            postal_code: req.body.postalCode,
-            state: req.body.state
-          },
-          name: 'billingAddress - ' + req.user.email
+        description: req.user.userId,
+        address: {
+          line1: req.body.line1,
+          city: req.body.city,
+          country: req.body.country,
+          line2: req.body.line2,
+          postal_code: req.body.postalCode,
+          state: req.body.state
         }
       };
-      console.log('params', params);
-      result = await stripe.customers.create(params);
-      console.log('HEREH', result);
-      if (
-        result &&
-        result.sources &&
-        result.sources.data &&
-        result.sources.data.length
-      ) {
-        card = result.sources.data[0];
-      } else {
-        return res
-          .status(422)
-          .send({ message: 'ERROR :  Unable to add credit card to account.' });
-      }
+      stripeInfo = await stripe.customers.create(createCustomerParams);
+      console.log('HERE', stripeInfo);
+      card = stripeInfo.sources.data[0];
+      console.log('CARD', card);
+      if (card.exp_month < 10) card.exp_month = '0' + card.exp_month;
+
+      stripeRecord = {
+        customerId: stripeInfo.id,
+        card: {
+          cardId: card.id,
+          country: card.country,
+          brand: card.brand,
+          last4: card.last4,
+          expirationDate: card.exp_month + '/' + card.exp_year
+        },
+        address: {
+          line1: stripeInfo.address.line1,
+          line2: stripeInfo.address.line2,
+          city: stripeInfo.address.city,
+          state: stripeInfo.address.state,
+          postalCode: stripeInfo.address.postal_code,
+          country: stripeInfo.address.country
+        }
+      };
     }
     //Existing customer, adds new card and updates address if different
-    else {
-      result = await stripe.customers.createSource(stripeCustomerId, {
-        source: req.body.token
-      });
-      card = result;
-      newCustomer = false;
-      // update stripe user address
-      if (
-        req.body.line1 !== req.user.billingAddressLine1 ||
-        req.body.city !== req.user.billingAddressCity ||
-        req.body.country !== req.user.billingAddressCountry ||
-        req.body.line2 !== req.user.billingAddressLine2 ||
-        req.body.postalCode !== req.user.billingAdddressPostalCode ||
-        req.body.state !== req.user.billingAddressState
-      ) {
-        newAddress = true;
+    // else {
+    //   result = await stripe.customers.createSource(stripeCustomerId, {
+    //     source: req.body.token
+    //   });
+    //   card = result;
+    //   newCustomer = false;
+    // update stripe user address
+    //   if (
+    //     req.body.line1 !== req.user.billingAddressLine1 ||
+    //     req.body.city !== req.user.billingAddressCity ||
+    //     req.body.country !== req.user.billingAddressCountry ||
+    //     req.body.line2 !== req.user.billingAddressLine2 ||
+    //     req.body.postalCode !== req.user.billingAdddressPostalCode ||
+    //     req.body.state !== req.user.billingAddressState
+    //   ) {
+    //     newAddress = true;
 
-        let updateStripeParams = {
-          //billing address
-          shipping: {
-            address: {
-              line1: req.body.line1,
-              city: req.body.city,
-              country: req.body.country,
-              line2: req.body.line2,
-              postal_code: req.body.postalCode,
-              state: req.body.state
-            },
-            name: 'billingAddress - ' + req.body.email
-          }
-        };
-        await stripe.customers.update(
-          req.user.stripeCustomerId,
-          updateStripeParams
-        );
-      }
-    }
-
-    if (card.exp_month < 10) card.exp_month = '0' + card.exp_month;
-
-    let updateExpression =
-      'set #stripeBillingCardBrand = :stripeBillingCardBrand, #stripeBillingCardExp = :stripeBillingCardExp';
-    updateExpression +=
-      ', #stripeBillingCardLast4 = :stripeBillingCardLast4, #stripeCardId = :stripeCardId';
-
-    // if (newAddress === true) {
-    updateExpression +=
-      ', #billingAddressLine1 = :billingAddressLine1, #billingAddressCity = :billingAddressCity';
-    updateExpression +=
-      ', #billingAddressCountry = :billingAddressCountry, #billingAddressLine2 = :billingAddressLine2';
-    updateExpression +=
-      ', #billingAdddressPostalCode = :billingAdddressPostalCode, #billingAddressState = :billingAddressState';
+    //     let updateStripeParams = {
+    //       //billing address
+    //       shipping: {
+    //         address: {
+    //           line1: req.body.line1,
+    //           city: req.body.city,
+    //           country: req.body.country,
+    //           line2: req.body.line2,
+    //           postal_code: req.body.postalCode,
+    //           state: req.body.state
+    //         },
+    //         name: 'billingAddress - ' + req.body.email
+    //       }
+    //     };
+    //     await stripe.customers.update(
+    //       req.user.stripeCustomerId,
+    //       updateStripeParams
+    //     );
+    //   }
     // }
 
-    if (newCustomer === true)
-      updateExpression += ', #stripeCustomerId = :stripeCustomerId';
-
-    let updateRequest = {
+    const updateRequest = {
       TableName: USER_TABLE,
       Key: {
         userId: req.user.userId
       },
-      UpdateExpression: updateExpression,
+      UpdateExpression: 'set #stripe = :stripe',
       ExpressionAttributeNames: {
-        '#stripeBillingCardBrand': 'stripeBillingCardBrand',
-        '#stripeBillingCardExp': 'stripeBillingCardExp',
-        '#stripeBillingCardLast4': 'stripeBillingCardLast4',
-        '#stripeCustomerId': 'stripeCustomerId',
-        '#stripeCardId': 'stripeCardId',
-        '#billingAddressLine1': 'billingAddressLine1',
-        '#billingAddressCity': 'billingAddressCity',
-        '#billingAddressCountry': 'billingAddressCountry',
-        '#billingAddressLine2': 'billingAddressLine2',
-        '#billingAdddressPostalCode': 'billingAdddressPostalCode',
-        '#billingAddressState': 'billingAddressState'
+        '#stripe': 'stripe'
       },
       ExpressionAttributeValues: {
-        ':stripeBillingCardBrand': card.brand,
-        ':stripeBillingCardExp': card.exp_month + '/' + card.exp_year,
-        ':stripeBillingCardLast4': card.last4,
-        ':stripeCustomerId': result.id,
-        ':stripeCardId': card.id,
-        ':billingAddressLine1': req.body.line1 || ' ',
-        ':billingAddressCity': req.body.city || ' ',
-        ':billingAddressCountry': req.body.country || ' ',
-        ':billingAddressLine2': req.body.line2 || ' ',
-        ':billingAdddressPostalCode': req.body.postalCode || ' ',
-        ':billingAddressState': req.body.state || ' '
+        ':stripe': stripeRecord
       },
       ReturnConsumedCapacity: 'TOTAL',
       ReturnValues: 'UPDATED_NEW'
     };
 
-    if (newCustomer === false) {
-      delete updateRequest.ExpressionAttributeNames['#stripeCustomerId'];
-      delete updateRequest.ExpressionAttributeValues[':stripeCustomerId'];
-    } else if (newAddress === false) {
-      delete updateRequest.ExpressionAttributeNames['#billingAddressLine1'];
-      delete updateRequest.ExpressionAttributeValues[':billingAddressLine1'];
-
-      delete updateRequest.ExpressionAttributeNames['#billingAddressCity'];
-      delete updateRequest.ExpressionAttributeValues[':billingAddressCity'];
-
-      delete updateRequest.ExpressionAttributeNames['#billingAddressCountry'];
-      delete updateRequest.ExpressionAttributeValues[':billingAddressCountry'];
-
-      delete updateRequest.ExpressionAttributeNames['#billingAddressLine2'];
-      delete updateRequest.ExpressionAttributeValues[':billingAddressLine2'];
-
-      delete updateRequest.ExpressionAttributeNames[
-        '#billingAdddressPostalCode'
-      ];
-      delete updateRequest.ExpressionAttributeValues[
-        ':billingAdddressPostalCode'
-      ];
-
-      delete updateRequest.ExpressionAttributeNames['#billingAddressState'];
-      delete updateRequest.ExpressionAttributeValues[':billingAddressState'];
-    }
-
-    try {
-      console.log(updateRequest);
-      //update the user in DB with relevant card info
-      let updatedUser = await docClient.update(updateRequest).promise();
-      //Checks to see if update worked
-      if (updatedUser.Attributes.stripeCardId === card.id) {
-        return res.status(200).send({ message: 'SUCCESS : Card added.' });
-      } else {
-        console.log('**ERROR** Dynamo update failed.');
-        return res.status(500).send({ message: 'ERROR : Adding card failed.' });
-      }
-    } catch (err) {
-      console.log("**ERROR** Couldn't update user in DB.**", err);
-      return res
-        .status(500)
-        .send({ message: "ERROR : Couldn't update user in DB." });
-    }
+    console.log(updateRequest);
+    //update the user in DB with relevant card info
+    let updatedUser = await docClient.update(updateRequest).promise();
+    console.log(updatedUser);
+    return res.status(200).send({ message: 'CARD UPDATED' });
   } catch (e) {
     console.log(e);
     resolveErrorSendResponse(e, res);
