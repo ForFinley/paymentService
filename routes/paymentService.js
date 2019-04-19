@@ -18,7 +18,7 @@ const getUserBillingHistory = require('../controllers/getUserBillingHistory.js')
 router.post(
   '/setBillingCard',
   authenticate,
-  addFullUser,
+  // addFullUser,
   setBillingCard.handler
 );
 

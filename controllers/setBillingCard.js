@@ -1,9 +1,12 @@
-const AWS = require('aws-sdk');
-const docClient = new AWS.DynamoDB.DocumentClient({
-  region: process.env.REGION
-});
+const { USER_TABLE } = require('../env.js');
+const { docClient } = require('./utils/dynamoSetup.js');
 const stripe = require('./stripeInstance');
-const userTable = process.env.USER_TABLE;
+const {
+  ValidationError,
+  InvalidCredentialsError,
+  ResourceExistsError,
+  resolveErrorSendResponse
+} = require('./utils/errors.js');
 
 /**
  * Reference: https://stripe.com/docs/stripe-js < -- Get token
@@ -12,22 +15,19 @@ const userTable = process.env.USER_TABLE;
 
 //check for token (that comes from stripe on the client request)
 function validate(body, res) {
-  if (!body.token) {
-    res.status(400).send({ message: 'ERROR : Missing source (token).' });
-    return false;
-  }
+  if (!body.token) throw new ValidationError('MISSING_SOURCE_TOKEN');
   return true;
 }
 
-module.exports.handler = async function(req, res) {
-  console.log('Starting function setBillingCard...');
-  console.log(req.body);
-
-  if (req.body === null || !validate(req.body, res)) {
-    return;
-  }
-
+module.exports.handler = async (req, res) => {
   try {
+    console.log('Starting function setBillingCard...');
+    console.log(req.body);
+
+    if (req.body === null || !validate(req.body, res)) {
+      return;
+    }
+
     const { stripeCustomerId } = req.user;
     let result;
     let card;
@@ -53,7 +53,7 @@ module.exports.handler = async function(req, res) {
           name: 'billingAddress - ' + req.user.email
         }
       };
-      console.log(params);
+      console.log('params', params);
       result = await stripe.customers.create(params);
       console.log('HEREH', result);
       if (
@@ -128,7 +128,7 @@ module.exports.handler = async function(req, res) {
       updateExpression += ', #stripeCustomerId = :stripeCustomerId';
 
     let updateRequest = {
-      TableName: userTable,
+      TableName: USER_TABLE,
       Key: {
         userId: req.user.userId
       },
@@ -207,10 +207,8 @@ module.exports.handler = async function(req, res) {
         .status(500)
         .send({ message: "ERROR : Couldn't update user in DB." });
     }
-  } catch (err) {
-    console.log('**ERROR** Issue with stripe result.** ', err);
-    return res
-      .status(500)
-      .send({ message: 'ERROR :  Issue with stripe result.' });
+  } catch (e) {
+    console.log(e);
+    resolveErrorSendResponse(e, res);
   }
 };
